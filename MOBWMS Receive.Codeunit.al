@@ -29,6 +29,8 @@ codeunit 50155 "MOB WMS Receive G2I"
        _RecRef: RecordRef;
        var _BaseOrderLineElement: Record "MOB NS BaseDataModel Element";
        var _Steps: Record "MOB Steps Element")
+    var
+        LotNoText: Text;
     begin
         // Step 6: Number of pallets.
         _Steps.Create_IntegerStep(6, 'NumberOfPallets');
@@ -56,15 +58,27 @@ codeunit 50155 "MOB WMS Receive G2I"
         _Steps.Set_optional(false);
         _Steps.Set_onlineValidation('QtyPerPalletValidation', true);
 
-        // Hook the expiration date step if it is present (only for lot-tracked items
-        // with Man. Expir. Date Entry Reqd.). When confirmed, the lot number is
-        // re-generated using the entered date rather than the pre-calculated default.
+        // Pre-compute the default lot number once for this line.
+        // Applied to LotNumber step below; ExpirationDateValidation regenerates it
+        // if the user enters a different expiration date.
+        LotNoText := GetReceiveLotNo(_RecRef);
+
+        // Scan existing standard steps: attach ExpirationDate validation and
+        // pre-fill LotNumber with the default lot.
         _Steps.SetRange(ConfigurationKey, _Steps.ConfigurationKey);
         if _Steps.FindSet() then
             repeat
-                if _Steps.Get_name() = 'ExpirationDate' then begin
-                    _Steps.Set_onlineValidation('ExpirationDateValidation', true);
-                    _Steps.Save();
+                case _Steps.Get_name() of
+                    'ExpirationDate':
+                        begin
+                            _Steps.Set_onlineValidation('ExpirationDateValidation', true);
+                            _Steps.Save();
+                        end;
+                    'LotNumber':
+                        if LotNoText <> '' then begin
+                            _Steps.Set_defaultValue(LotNoText);
+                            _Steps.Save();
+                        end;
                 end;
             until _Steps.Next() = 0;
     end;
@@ -445,13 +459,9 @@ codeunit 50155 "MOB WMS Receive G2I"
         _BaseOrderLineElement.Set_ValidateToBin(false);
     end;
 
-    // Pre-fill the lot number using the same LGS lot format as production, but
-    // with the item's expiration date (CalcDate from ItemTrackingCode."Expiration
-    // Calculation") as the date input. Falls back to Today() when no formula is set.
-    [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Receive", 'OnGetReceiveOrderLines_OnAfterSetFromAnyLine', '', true, true)]
-    local procedure OnSetReceiveLotNumber(
-        _RecRef: RecordRef;
-        var _BaseOrderLineElement: Record "MOB NS BaseDataModel Element")
+    // Returns the default lot number for the receive line using the item's LGS lot
+    // format and expiration calculation. Returns '' when not applicable.
+    local procedure GetReceiveLotNo(_RecRef: RecordRef): Text
     var
         WhseReceiptLine: Record "Warehouse Receipt Line";
         PurchaseLine: Record "Purchase Line";
@@ -463,8 +473,6 @@ codeunit 50155 "MOB WMS Receive G2I"
         ItemNo: Code[20];
         LocationCode: Code[10];
         LastLotNo: Text;
-        LotNoText: Text;
-        ExpirationDate: Date;
     begin
         case _RecRef.Number() of
             Database::"Warehouse Receipt Line":
@@ -480,22 +488,16 @@ codeunit 50155 "MOB WMS Receive G2I"
                     LocationCode := PurchaseLine."Location Code";
                 end;
             else
-                exit;
+                exit('');
         end;
 
         if not Item.Get(ItemNo) then
-            exit;
+            exit('');
         if Item."LGS EL Lot No. Format Code" = '' then
-            exit;
+            exit('');
         if not LotFormatHeader.Get(Item."LGS EL Lot No. Format Code") then
-            exit;
+            exit('');
 
-        // Date = expiration date from item's expiration calculation formula; today if no formula.
-        ExpirationDate := Today();
-        if Format(Item."Expiration Calculation") <> '' then
-            ExpirationDate := CalcDate(Item."Expiration Calculation", Today());
-
-        // Resolve last lot number — same pattern as production.
         LotNoInfo.SetRange("Item No.", ItemNo);
         if LotNoInfo.FindLast() then
             LastLotNo := LotNoInfo."Lot No."
@@ -507,17 +509,12 @@ codeunit 50155 "MOB WMS Receive G2I"
                 LastLotNo := ItemLedgerEntry."Lot No.";
         end;
 
-        LotNoText := LotFormatImpl.GenerateLotNo(
+        exit(LotFormatImpl.GenerateLotNo(
             LotFormatHeader,
             LocationCode,
-            ExpirationDate,
-            '',     // ShiftCode — not applicable for receive
-            '',     // WorkCenterCode — not applicable for receive
-            '',     // MachineCenterCode — not applicable for receive
-            LastLotNo);
-
-        if LotNoText <> '' then
-            _BaseOrderLineElement.SetValue('LotNumber', LotNoText);
+            Today(),
+            '', '', '',     // ShiftCode, WorkCenterCode, MachineCenterCode — not applicable for receive
+            LastLotNo));
     end;
 
     // LP step is always suppressed — LPs are created automatically in the post handler.

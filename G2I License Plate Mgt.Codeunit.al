@@ -185,6 +185,7 @@ codeunit 50153 "G2I License Plate Mgt"
         SourceLP: Record "MOB License Plate";
         NewLP: Record "MOB License Plate";
         LPContent: Record "MOB License Plate Content";
+        Location: Record Location;
         G2IPickSession: Codeunit "G2I Pick Session";
         NeedModify: Boolean;
     begin
@@ -213,6 +214,12 @@ codeunit 50153 "G2I License Plate Mgt"
                 SourceLP.Validate("Whse. Document No.", _WhseDocumentNo);
                 NeedModify := true;
             end;
+            if SourceLP."Whse. Document Type" = SourceLP."Whse. Document Type"::Shipment then
+                if Location.Get(SourceLP."Location Code") then
+                    if (Location."Shipment Bin Code" <> '') and (SourceLP."Bin Code" <> Location."Shipment Bin Code") then begin
+                        SourceLP."Bin Code" := Location."Shipment Bin Code";
+                        NeedModify := true;
+                    end;
             if NeedModify then
                 SourceLP.Modify(true);
             G2IPickSession.AddLicensePlateResult(SourceLP."No.", false);
@@ -226,8 +233,12 @@ codeunit 50153 "G2I License Plate Mgt"
         if _WhseDocumentNo <> '' then begin
             NewLP.Validate("Whse. Document Type", _WhseDocumentType);
             NewLP.Validate("Whse. Document No.", _WhseDocumentNo);
-            NewLP.Modify(true);
         end;
+        if NewLP."Whse. Document Type" = NewLP."Whse. Document Type"::Shipment then
+            if Location.Get(NewLP."Location Code") then
+                if Location."Shipment Bin Code" <> '' then
+                    NewLP."Bin Code" := Location."Shipment Bin Code";
+        NewLP.Modify(true);
         AddContentLine(NewLP, LPContent, _PickedQty);
         ReduceContentLine(SourceLP, LPContent, _PickedQty);
 

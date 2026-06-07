@@ -238,6 +238,7 @@ codeunit 50152 "MOB WMS Pick G2I"
         LotNoInfo: Record "Lot No. Information";
         LotStatus: Record "LGS LS Lot Status";
         LPStatus: Record "LGS LPS License Plate Status";
+        AlreadyRegistered: Record "MOB WMS Registration";
         G2ILicensePlateMgt: Codeunit "G2I License Plate Mgt";
         MobToolbox: Codeunit "MOB Toolbox";
         MobXmlMgt: Codeunit "MOB XML Management";
@@ -262,6 +263,11 @@ codeunit 50152 "MOB WMS Pick G2I"
         if not LicensePlate.Get(LicensePlateNo) then
             Error('License Plate %1 does not exist.', LicensePlateNo);
 
+        AlreadyRegistered.SetRange("From License Plate No.", LicensePlateNo);
+        AlreadyRegistered.SetRange(Handled, false);
+        if not AlreadyRegistered.IsEmpty() then
+            Error('License Plate %1 is already picked.', LicensePlateNo);
+
         BackendId := CopyStr(TempRequestValues.GetValue('backendId'), 1, MaxStrLen(BackendId));
         WhseActLine.Get(WhseActLine."Activity Type"::Pick, BackendId, TempRequestValues.Get_LineNumberAsInteger());
 
@@ -273,7 +279,7 @@ codeunit 50152 "MOB WMS Pick G2I"
         if (WhseActLine."LGS Pallet Type" <> '') and
            (LicensePlate."LGS Pallet Type" <> WhseActLine."LGS Pallet Type")
         then
-            Error('License Plate %1 has pallet type %2, but pick line requires %3.',
+            Error('License Plate %1 has pallet type %2, but pick requires %3.',
                 LicensePlateNo, LicensePlate."LGS Pallet Type", WhseActLine."LGS Pallet Type");
 
         if LicensePlate."LGS LPS LP Status Code" = '' then

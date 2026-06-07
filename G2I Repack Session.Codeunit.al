@@ -12,6 +12,8 @@ codeunit 50160 "G2I Repack Session"
         _ExpirationDate: Date;
         _Quantity: Decimal;
         _OrderType: Text;
+        _FromLicensePlateNo: Code[20];
+        _PalletType: Code[20];
 
     procedure SetOrderType(_Value: Text)
     begin
@@ -28,18 +30,22 @@ codeunit 50160 "G2I Repack Session"
         exit(_OrderType);
     end;
 
-    procedure SetConsumptionValues(_LotNo2: Code[50]; _ExpirationDate2: Date; _Quantity2: Decimal)
+    procedure SetConsumptionValues(_LotNo2: Code[50]; _ExpirationDate2: Date; _Quantity2: Decimal; _FromLPNo2: Code[20]; _PalletType2: Code[20])
     begin
         _LotNo := _LotNo2;
         _ExpirationDate := _ExpirationDate2;
         _Quantity := _Quantity2;
+        _FromLicensePlateNo := _FromLPNo2;
+        _PalletType := _PalletType2;
     end;
 
-    procedure GetConsumptionValues(var _LotNo2: Code[50]; var _ExpirationDate2: Date; var _Quantity2: Decimal)
+    procedure GetConsumptionValues(var _LotNo2: Code[50]; var _ExpirationDate2: Date; var _Quantity2: Decimal; var _FromLPNo2: Code[20]; var _PalletType2: Code[20])
     begin
         _LotNo2 := _LotNo;
         _ExpirationDate2 := _ExpirationDate;
         _Quantity2 := _Quantity;
+        _FromLPNo2 := _FromLicensePlateNo;
+        _PalletType2 := _PalletType;
     end;
 
     procedure Clear()
@@ -48,5 +54,7 @@ codeunit 50160 "G2I Repack Session"
         _ExpirationDate := 0D;
         _Quantity := 0;
         _OrderType := '';
+        _FromLicensePlateNo := '';
+        _PalletType := '';
     end;
 }

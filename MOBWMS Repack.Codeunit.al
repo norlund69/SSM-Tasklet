@@ -230,9 +230,12 @@ codeunit 50159 "MOB WMS Repack G2I"
         var _ProductionJnlLine: Record "Item Journal Line")
     var
         G2IRepackSession: Codeunit "G2I Repack Session";
+        LicensePlate: Record "MOB License Plate";
         LotNo: Code[50];
         ExpirationDate: Date;
         Quantity: Decimal;
+        FromLPNo: Code[20];
+        PalletType: Code[20];
     begin
         if G2IRepackSession.GetOrderType() <> 'Repack' then
             exit;
@@ -241,8 +244,11 @@ codeunit 50159 "MOB WMS Repack G2I"
         if not Evaluate(ExpirationDate, _Registration.GetValue('ExpirationDate')) then
             ExpirationDate := 0D;
         Quantity := _Registration.Quantity;
+        FromLPNo := CopyStr(_Registration.GetValue('FromLicensePlate'), 1, MaxStrLen(FromLPNo));
+        if LicensePlate.Get(FromLPNo) then
+            PalletType := LicensePlate."LGS Pallet Type";
 
-        G2IRepackSession.SetConsumptionValues(LotNo, ExpirationDate, Quantity);
+        G2IRepackSession.SetConsumptionValues(LotNo, ExpirationDate, Quantity, FromLPNo, PalletType);
     end;
 
     // =========================================================================
@@ -262,19 +268,29 @@ codeunit 50159 "MOB WMS Repack G2I"
         LotNo: Code[50];
         ExpirationDate: Date;
         Quantity: Decimal;
+        FromLPNo: Code[20];
+        PalletType: Code[20];
     begin
         if G2IRepackSession.GetOrderType() <> 'Repack' then
             exit;
 
-        G2IRepackSession.GetConsumptionValues(LotNo, ExpirationDate, Quantity);
+        G2IRepackSession.GetConsumptionValues(LotNo, ExpirationDate, Quantity, FromLPNo, PalletType);
 
-        if LotNo = '' then
-            exit;
+        // Show the source LP consumed in the previous step for reference.
+        if FromLPNo <> '' then
+            _LookupResponseElement.Set_DisplayLine7('Source LP: ' + FromLPNo);
 
-        // Pre-fill lot number and quantity from the consumed LP.
-        _LookupResponseElement.SetValue('LotNumber', LotNo);
+        // Pre-fill pallet type — user confirms before posting.
+        if PalletType <> '' then
+            _LookupResponseElement.SetValue('PalletType', PalletType);
+
+        // Pre-fill lot number and expiration — user confirms before posting.
+        if LotNo <> '' then
+            _LookupResponseElement.SetValue('LotNumber', LotNo);
         if ExpirationDate <> 0D then
             _LookupResponseElement.SetValue('ExpirationDate', Format(ExpirationDate, 0, '<Day,2>/<Month,2>/<Year4>'));
+
+        // Pre-fill quantity from the consumed LP.
         if Quantity > 0 then begin
             _LookupResponseElement.Set_Quantity(Format(Quantity, 0, '<Precision,0:5><Standard Format,0>'));
             _LookupResponseElement.Set_UoM(_ProdOrderLine."Unit of Measure Code");
@@ -282,9 +298,12 @@ codeunit 50159 "MOB WMS Repack G2I"
     end;
 
     // =========================================================================
-    // 4.  OUTPUT POST — apply same lot and expiration date to new LP
+    // 4.  OUTPUT POST — apply confirmed lot and expiration to journal line,
+    //     then auto-create a new LP with the confirmed pallet type.
     // =========================================================================
 
+    // Applies the user-confirmed lot number and expiration date to the output
+    // journal line in case Tasklet's standard tracking does not pick them up.
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Adhoc Registr.", 'OnPostAdhocRegistrationOnProdOutput_OnAfterCreateProductionJnlLine', '', true, true)]
     local procedure OnAfterCreateRepackOutputJnlLine(
         var _RequestValues: Record "MOB NS Request Element";
@@ -293,21 +312,68 @@ codeunit 50159 "MOB WMS Repack G2I"
         G2IRepackSession: Codeunit "G2I Repack Session";
         LotNo: Code[50];
         ExpirationDate: Date;
-        Quantity: Decimal;
     begin
         if G2IRepackSession.GetOrderType() <> 'Repack' then
             exit;
 
-        G2IRepackSession.GetConsumptionValues(LotNo, ExpirationDate, Quantity);
+        LotNo := CopyStr(_RequestValues.GetValue('LotNumber'), 1, MaxStrLen(LotNo));
         if LotNo = '' then
             exit;
 
-        // Override the lot number on the journal line to ensure the consumed
-        // lot is used regardless of what the user may have edited.
         _ProductionJnlLine.Validate("Lot No.", LotNo);
-        if ExpirationDate <> 0D then
-            _ProductionJnlLine.Validate("Expiration Date", ExpirationDate);
+        if Evaluate(ExpirationDate, _RequestValues.GetValue('ExpirationDate')) then
+            if ExpirationDate <> 0D then
+                _ProductionJnlLine.Validate("Expiration Date", ExpirationDate);
         _ProductionJnlLine.Modify(true);
+    end;
+
+    // Auto-creates a new LP for the output item using the user-confirmed
+    // pallet type, lot, and base quantity.  Mirrors OnAutoCreateProdOutputLP
+    // in MOB WMS Production G2I but applies to Repack orders only.
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Adhoc Registr.", 'OnPostAdhocRegistrationOnProdOutput_OnAfterCreateProductionJnlLine', '', true, true)]
+    local procedure OnAutoCreateRepackOutputLP(
+        var _RequestValues: Record "MOB NS Request Element";
+        var _ProductionJnlLine: Record "Item Journal Line")
+    var
+        Item: Record Item;
+        G2ILicensePlateMgt: Codeunit "G2I License Plate Mgt";
+        NewLP: Record "MOB License Plate";
+        SourceContent: Record "MOB License Plate Content";
+        G2IRepackSession: Codeunit "G2I Repack Session";
+        PalletType: Code[20];
+        ToBin: Code[20];
+        LotNo: Code[50];
+    begin
+        if G2IRepackSession.GetOrderType() <> 'Repack' then
+            exit;
+
+        if _ProductionJnlLine."Output Quantity" <= 0 then
+            exit;
+
+        if not Item.Get(_ProductionJnlLine."Item No.") then
+            exit;
+
+        ToBin := CopyStr(_RequestValues.GetValueOrContextValue('ToBin'), 1, MaxStrLen(ToBin));
+        LotNo := CopyStr(_RequestValues.GetValue('LotNumber'), 1, MaxStrLen(LotNo));
+        PalletType := CopyStr(_RequestValues.GetValue('PalletType'), 1, MaxStrLen(PalletType));
+
+        SourceContent.Init();
+        SourceContent.Validate(Type, SourceContent.Type::Item);
+        SourceContent.Validate("No.", _ProductionJnlLine."Item No.");
+        SourceContent.Validate("Variant Code", _ProductionJnlLine."Variant Code");
+        SourceContent.Validate("Unit Of Measure Code", Item."Base Unit of Measure");
+        SourceContent.Validate("Location Code", _ProductionJnlLine."Location Code");
+        SourceContent.Validate("Bin Code", ToBin);
+        SourceContent.Validate("Lot No.", LotNo);
+
+        NewLP.Init();
+        NewLP.Validate("No.", G2ILicensePlateMgt.GetNextLicensePlateNo());
+        NewLP.Validate("Location Code", _ProductionJnlLine."Location Code");
+        NewLP.Validate("Bin Code", ToBin);
+        NewLP."LGS Pallet Type" := PalletType;
+        NewLP.Insert(true);
+
+        G2ILicensePlateMgt.AddContentLine(NewLP, SourceContent, _ProductionJnlLine."Output Quantity (Base)");
     end;
 
     // =========================================================================

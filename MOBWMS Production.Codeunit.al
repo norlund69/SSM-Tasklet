@@ -463,12 +463,14 @@ codeunit 50157 "MOB WMS Production G2I"
         var IsHandled: Boolean)
     var
         G2IRepackSession: Codeunit "G2I Repack Session";
+        OrderType: Text;
     begin
-        if G2IRepackSession.GetOrderType() <> 'Production' then
+        OrderType := G2IRepackSession.GetOrderType();
+        if (OrderType <> 'Production') and (OrderType <> 'Repack') then
             exit;
 
-        // Suppress the standard LP scan step — LP is created automatically
-        // at post time for Finished Good items (see OnAfterCreateProdOutputJnlLine).
+        // Suppress the standard LP scan step — LP is created automatically at post time.
+        // Production: see OnAutoCreateProdOutputLP.  Repack: see OnAutoCreateRepackOutputLP.
         IsHandled := true;
     end;
 

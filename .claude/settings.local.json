@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/bjarne/Downloads/MOB 5.66.280.282 Per-Tenant Source Code/Objects/_Codeunit/**)",
+      "Read(//c/Users/bjarne/Downloads/MOB 5.66.280.282 Per-Tenant Source Code/**)",
+      "PowerShell(Get-ChildItem \"$env:TEMP\\\\lgs_lot_status\" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize)"
+    ]
+  }
+}

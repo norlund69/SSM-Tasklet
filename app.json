@@ -1,0 +1,81 @@
+{
+  "id": "81081787-6c35-4e73-97ff-66b3baff0dd5",
+  "name": "G2I WMS Extensions",
+  "publisher": "Get2Insight",
+  "version": "1.0.0.8",
+  "brief": "",
+  "description": "",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    { 
+      "id": "a5727ce6-368c-49e2-84cb-1a6052f0551c", 
+      "name": "Tasklet Mobile WMS", 
+      "publisher": "Tasklet Factory", 
+      "version": "5.66.280.282" 
+    },
+    { 
+      "id": "6f8b3a4e-9c1d-4b7a-a2e3-f5c6d8e9b0f1", 
+      "name": "LGS Pallet Type", 
+      "publisher": "Liberty Grove Software", 
+      "version": "1.0.110.0" 
+    },
+        { 
+      "id": "a2be6ad4-eae3-4386-8761-8d681127d5e2", 
+      "name": "LGS License Plate Status", 
+      "publisher": "Liberty Grove Software", 
+      "version": "1.0.110.0" 
+    },
+    { 
+      "id": "ead73073-592d-4d77-a512-ad876bde47be", 
+      "name": "LGS Delivery Trip Enhancement", 
+      "publisher": "Liberty Grove Software", 
+      "version": "1.0.110.0" 
+    },
+    { 
+      "id": "ef5d9673-94bf-4262-a622-855bc55cb246", 
+      "name": "LGS Foodservice Delivery Trips", 
+      "publisher": "Liberty Grove Software", 
+      "version": "1.1.240.0" 
+    },
+    { 
+      "id": "75743baf-a9e4-4593-91f8-49417721e89d", 
+      "name": "LGS Foodservice Extended Lot Management", 
+      "publisher": "Liberty Grove Software", 
+      "version": "1.1.240.0" 
+    },
+    { 
+      "id": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d", 
+      "name": "LGS Planning Worksheet", 
+      "publisher": "Liberty Grove Software", 
+      "version": "1.0.110.0" 
+    },
+    { 
+      "id": "7476b264-80e3-47a0-8f45-61e255787aff", 
+      "name": "LGS Lot Status", 
+      "publisher": "Liberty Grove Software", 
+      "version": "1.0.110.0" 
+    }
+  ],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "idRanges": [
+    {
+      "from": 50150,
+      "to": 50199
+    }
+  ],
+  "resourceExposurePolicy": {
+    "allowDebugging": true,
+    "allowDownloadingSource": false,
+    "includeSourceInSymbolFile": false
+  },
+  "runtime": "16.0",
+  "features": [
+    "NoImplicitWith"
+  ]
+}

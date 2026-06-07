@@ -460,7 +460,7 @@ codeunit 50155 "MOB WMS Receive G2I"
     end;
 
     // Returns the default lot number for the receive line using the item's LGS lot
-    // format and expiration calculation. Returns '' when not applicable.
+    // format with today's date. Returns '' when not applicable.
     local procedure GetReceiveLotNo(_RecRef: RecordRef): Text
     var
         WhseReceiptLine: Record "Warehouse Receipt Line";

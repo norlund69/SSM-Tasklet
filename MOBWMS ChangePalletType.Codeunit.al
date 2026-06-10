@@ -23,7 +23,7 @@ codeunit 50151 "MOB WMS Change Pallet Type"
         _HeaderFields.InitConfigurationKey('ChangePalletType');
 
         // ---- Field 1: Location ----
-        _HeaderFields.Create_ListField_FilterLocation(10);
+        _HeaderFields.Create_ListField_FilterLocationAsLocation(10);
         _HeaderFields.Set_label(MobWmsLanguage.GetMessage('LOCATION') + ':');
         _HeaderFields.Set_clearOnClear(true);
         _HeaderFields.Set_optional(false);
@@ -50,7 +50,7 @@ codeunit 50151 "MOB WMS Change Pallet Type"
         if _RegistrationType <> 'ChangePalletType' then
             exit;
 
-        LocationCode := CopyStr(_HeaderFieldValues.GetValue('LocationCode'), 1, MaxStrLen(LocationCode));
+        LocationCode := CopyStr(_HeaderFieldValues.Get_Location(false), 1, MaxStrLen(LocationCode));
         LP := _HeaderFieldValues.Get_LicensePlate();
 
         if not LicensePlate.Get(LP) then
@@ -63,9 +63,9 @@ codeunit 50151 "MOB WMS Change Pallet Type"
         // ---- Step 1: Information step - LP details ----
         // Create_InformationStep(_Id, _Name, _Header). The Header is the
         // body text shown to the user; embed newlines for multi-line.
-        InfoText := BuildInfoText(LicensePlate);
+        /*InfoText := BuildInfoText(LicensePlate);
         _Steps.Create_InformationStep(10, 'LPDetails', InfoText);
-        _Steps.Set_header('License Plate Details');
+        _Steps.Set_header('License Plate Details');*/
 
         // ---- Step 2: New Pallet Type list ----
         _Steps.Create_ListStep(20, 'NewPalletType');

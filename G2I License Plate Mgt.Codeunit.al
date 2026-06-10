@@ -101,6 +101,7 @@ codeunit 50153 "G2I License Plate Mgt"
             _NewLP.Validate("Whse. Document No.", _SourceLP."Whse. Document No.");
         end;
         _NewLP."LGS Pallet Type" := _PalletType;
+        _NewLP.Validate("LGS LPS LP Status Code", 'Released');
         _NewLP.Insert(true);
     end;
 

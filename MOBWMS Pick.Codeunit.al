@@ -238,7 +238,6 @@ codeunit 50152 "MOB WMS Pick G2I"
         LotNoInfo: Record "Lot No. Information";
         LotStatus: Record "LGS LS Lot Status";
         LPStatus: Record "LGS LPS License Plate Status";
-        AlreadyRegistered: Record "MOB WMS Registration";
         G2ILicensePlateMgt: Codeunit "G2I License Plate Mgt";
         MobToolbox: Codeunit "MOB Toolbox";
         MobXmlMgt: Codeunit "MOB XML Management";
@@ -250,6 +249,8 @@ codeunit 50152 "MOB WMS Pick G2I"
         LicensePlateNo: Code[20];
         LotNo: Code[50];
         BackendId: Code[20];
+        Count: Integer;
+        ErrorMsg: Text;
     begin
         if _DocumentType <> 'LicensePlateValidation' then
             exit;
@@ -263,12 +264,12 @@ codeunit 50152 "MOB WMS Pick G2I"
         if not LicensePlate.Get(LicensePlateNo) then
             Error('License Plate %1 does not exist.', LicensePlateNo);
 
-        AlreadyRegistered.SetRange("From License Plate No.", LicensePlateNo);
-        AlreadyRegistered.SetRange(Handled, false);
-        if not AlreadyRegistered.IsEmpty() then
-            Error('License Plate %1 is already picked.', LicensePlateNo);
+        if LicensePlate."Whse. Document Type" <> LicensePlate."Whse. Document Type"::" " then
+            Error('You cannot pick from License Plate %1 because it is linked to %2 %3.',
+                LicensePlateNo, LicensePlate."Whse. Document Type", LicensePlate."Whse. Document No.");
 
         BackendId := CopyStr(TempRequestValues.GetValue('backendId'), 1, MaxStrLen(BackendId));
+
         WhseActLine.Get(WhseActLine."Activity Type"::Pick, BackendId, TempRequestValues.Get_LineNumberAsInteger());
 
         G2ILicensePlateMgt.ValidateLicensePlateHasItem(
@@ -334,6 +335,15 @@ codeunit 50152 "MOB WMS Pick G2I"
                 end;
             until LPContent.Next() = 0;
 
+        if not CanPickEntireLicensePlate(LicensePlate, BackendId) then
+            Error('License Plate %1 cannot be fully picked from this pick order. Only full license plate picks are allowed.', LicensePlateNo);
+
+        // LP quantity must not exceed the outstanding quantity on this line.
+        // (Partial-split code remains in the post handler for future use.)
+        ErrorMsg := CheckLPQtyForOrderLines(LicensePlate, BackendId, TempRequestValues.Get_LineNumberAsInteger());
+        if ErrorMsg <> '' then
+            Error(ErrorMsg);
+
         LotNo := G2ILicensePlateMgt.GetSingleLotFromLicensePlate(
             LicensePlateNo,
             WhseActLine."Item No.",
@@ -369,7 +379,7 @@ codeunit 50152 "MOB WMS Pick G2I"
             MobXmlMgt.AddAttribute(XmlStep, 'value',
                 Format(LPContent.Quantity, 0, '<Precision,0:5><Standard Format,0>'));
             MobXmlMgt.AddAttribute(XmlStep, 'interactionPermission',
-                Format(Enum::"MOB ValueInteractionPermission"::AllowEdit));
+                Format(Enum::"MOB ValueInteractionPermission"::VerifyOnly));
         end;
     end;
 
@@ -386,32 +396,272 @@ codeunit 50152 "MOB WMS Pick G2I"
             exit;
         if _DocumentType <> 'QuantityValidation' then
             exit;
+        /*
+                LicensePlateNo := CopyStr(_RequestValues.GetValue('FromLicensePlate'), 1, MaxStrLen(LicensePlateNo));
+                EnteredQty := _RequestValues.Get_Quantity();
 
-        LicensePlateNo := CopyStr(_RequestValues.GetValue('FromLicensePlate'), 1, MaxStrLen(LicensePlateNo));
-        EnteredQty := _RequestValues.Get_Quantity();
+                WhseActLine.Get(
+                    WhseActLine."Activity Type"::Pick,
+                    CopyStr(_RequestValues.GetValue('backendId'), 1, MaxStrLen(WhseActLine."No.")),
+                    _RequestValues.Get_LineNumberAsInteger());
 
-        WhseActLine.Get(
-            WhseActLine."Activity Type"::Pick,
-            CopyStr(_RequestValues.GetValue('backendId'), 1, MaxStrLen(WhseActLine."No.")),
-            _RequestValues.Get_LineNumberAsInteger());
+                LotNo := CopyStr(_RequestValues.GetValue('LotNumber'), 1, MaxStrLen(LotNo));
 
-        LotNo := CopyStr(_RequestValues.GetValue('LotNumber'), 1, MaxStrLen(LotNo));
+                LPContent.SetRange("License Plate No.", LicensePlateNo);
+                LPContent.SetRange(Type, LPContent.Type::Item);
+                LPContent.SetRange("No.", WhseActLine."Item No.");
+                if WhseActLine."Variant Code" <> '' then
+                    LPContent.SetRange("Variant Code", WhseActLine."Variant Code");
+                if LotNo <> '' then
+                    LPContent.SetRange("Lot No.", LotNo);
+
+                if not LPContent.FindFirst() then
+                    Error('No content found on License Plate %1 for item %2.', LicensePlateNo, WhseActLine."Item No.");
+
+                if EnteredQty > LPContent.Quantity then
+                    Error('Quantity %1 exceeds License Plate content of %2.', EnteredQty, LPContent.Quantity);
+        */
+        _IsHandled := true;
+    end;
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Whse. Inquiry", 'OnWhseInquiryOnCustomDocumentTypeAsXml', '', true, true)]
+    local procedure OnValidateLPFromOrderLines(
+        var _XMLRequestDoc: XmlDocument;
+        var _XMLResponseDoc: XmlDocument;
+        _DocumentType: Text;
+        var _RegistrationTypeTracking: Text[200];
+        var _IsHandled: Boolean)
+    var
+        LicensePlate: Record "MOB License Plate";
+        LPContent: Record "MOB License Plate Content";
+        MobRequestMgt: Codeunit "MOB NS Request Management";
+        TempRequestValues: Record "MOB NS Request Element" temporary;
+        LicensePlateNo: Code[20];
+        BackendId: Code[20];
+        ErrorMsg: Text;
+    begin
+        if _DocumentType <> 'GetLicensePlateContentToPick' then
+            exit;
+
+        MobRequestMgt.SaveAdhocRequestValues(_XMLRequestDoc, TempRequestValues);
+        LicensePlateNo := CopyStr(TempRequestValues.GetValue('scannedValue'), 1, MaxStrLen(LicensePlateNo));
+        BackendId := CopyStr(TempRequestValues.Get_BackendID(), 1, MaxStrLen(BackendId));
+
+        if not LicensePlate.Get(LicensePlateNo) then
+            exit; // let Tasklet show its own LP_NOT_FOUND error
 
         LPContent.SetRange("License Plate No.", LicensePlateNo);
         LPContent.SetRange(Type, LPContent.Type::Item);
-        LPContent.SetRange("No.", WhseActLine."Item No.");
-        if WhseActLine."Variant Code" <> '' then
-            LPContent.SetRange("Variant Code", WhseActLine."Variant Code");
-        if LotNo <> '' then
-            LPContent.SetRange("Lot No.", LotNo);
+        if LPContent.IsEmpty() then
+            Error('License Plate %1 has no items and cannot be picked.', LicensePlateNo);
 
-        if not LPContent.FindFirst() then
-            Error('No content found on License Plate %1 for item %2.', LicensePlateNo, WhseActLine."Item No.");
+        ErrorMsg := CheckLPStatusForOrderLines(LicensePlate, BackendId);
+        if ErrorMsg <> '' then
+            Error(ErrorMsg);
 
-        if EnteredQty > LPContent.Quantity then
-            Error('Quantity %1 exceeds License Plate content of %2.', EnteredQty, LPContent.Quantity);
+        ErrorMsg := CheckLotStatusForOrderLines(LicensePlate, BackendId);
+        if ErrorMsg <> '' then
+            Error(ErrorMsg);
 
-        _IsHandled := true;
+        if not CanPickEntireLicensePlate(LicensePlate, BackendId) then
+            Error('License Plate %1 cannot be fully picked from this pick order. Only full license plate picks are allowed.', LicensePlateNo);
+
+        ErrorMsg := CheckLPQtyForOrderLines(LicensePlate, BackendId, 0);
+        if ErrorMsg <> '' then
+            Error(ErrorMsg);
+    end;
+
+    // _LineNo = 0 : check all TAKE lines in the order (order-lines flow).
+    // _LineNo > 0 : check only the specific line and only its item/variant (per-line flow).
+    local procedure CheckLPQtyForOrderLines(_LicensePlate: Record "MOB License Plate"; _BackendId: Code[20]; _LineNo: Integer) ErrorMsg: Text
+    var
+        LPContent: Record "MOB License Plate Content";
+        LPContent2: Record "MOB License Plate Content";
+        WhseActLine: Record "Warehouse Activity Line";
+        LPQty: Decimal;
+        LineQty: Decimal;
+    begin
+        LPContent.SetRange("License Plate No.", _LicensePlate."No.");
+        LPContent.SetRange(Type, LPContent.Type::Item);
+        if _LineNo > 0 then begin
+            WhseActLine.Get(WhseActLine."Activity Type"::Pick, _BackendId, _LineNo);
+            LPContent.SetRange("No.", WhseActLine."Item No.");
+            if WhseActLine."Variant Code" <> '' then
+                LPContent.SetRange("Variant Code", WhseActLine."Variant Code");
+        end;
+        if not LPContent.FindSet() then
+            exit('');
+
+        repeat
+            LPContent2.SetRange("License Plate No.", _LicensePlate."No.");
+            LPContent2.SetRange(Type, LPContent2.Type::Item);
+            LPContent2.SetRange("No.", LPContent."No.");
+            LPContent2.SetRange("Variant Code", LPContent."Variant Code");
+            LPContent2.CalcSums(Quantity);
+            LPQty := LPContent2.Quantity;
+
+            WhseActLine.SetRange("Activity Type", WhseActLine."Activity Type"::Pick);
+            WhseActLine.SetRange("No.", _BackendId);
+            WhseActLine.SetRange("Action Type", WhseActLine."Action Type"::Take);
+            WhseActLine.SetRange("Item No.", LPContent."No.");
+            WhseActLine.SetRange("Variant Code", LPContent."Variant Code");
+            if _LineNo > 0 then
+                WhseActLine.SetRange("Line No.", _LineNo);
+            WhseActLine.CalcSums("Qty. Outstanding");
+            LineQty := WhseActLine."Qty. Outstanding";
+
+            if LPQty > LineQty then
+                exit(StrSubstNo(
+                    'License Plate %1 contains %2 %3 but only %4 remains on the pick line. Partial picks are not allowed.',
+                    _LicensePlate."No.",
+                    Format(LPQty, 0, '<Precision,0:5><Standard Format,0>'),
+                    LPContent."Unit Of Measure Code",
+                    Format(LineQty, 0, '<Precision,0:5><Standard Format,0>')));
+        until LPContent.Next() = 0;
+    end;
+
+    local procedure CheckLPStatusForOrderLines(_LicensePlate: Record "MOB License Plate"; _BackendId: Code[20]) ErrorMsg: Text
+    var
+        WhseActLine: Record "Warehouse Activity Line";
+        LPStatus: Record "LGS LPS License Plate Status";
+    begin
+        if _LicensePlate."LGS LPS LP Status Code" = '' then
+            exit(StrSubstNo('License Plate %1 has no status set and cannot be picked.', _LicensePlate."No."));
+        if not LPStatus.Get(_LicensePlate."LGS LPS LP Status Code") then
+            exit(StrSubstNo('License Plate %1 has unknown status ''%2''.', _LicensePlate."No.", _LicensePlate."LGS LPS LP Status Code"));
+
+        WhseActLine.SetRange("Activity Type", WhseActLine."Activity Type"::Pick);
+        WhseActLine.SetRange("No.", _BackendId);
+        WhseActLine.SetRange("Action Type", WhseActLine."Action Type"::Take);
+        if not WhseActLine.FindFirst() then
+            exit('');
+
+        case WhseActLine."Source Document" of
+            WhseActLine."Source Document"::"Sales Order":
+                if not LPStatus."Available for Sale" then
+                    exit(StrSubstNo('License Plate %1 (status ''%2'') is not available for sale.', _LicensePlate."No.", LPStatus.Code));
+            WhseActLine."Source Document"::"Outbound Transfer":
+                if not LPStatus."Available for Transfer" then
+                    exit(StrSubstNo('License Plate %1 (status ''%2'') is not available for transfer.', _LicensePlate."No.", LPStatus.Code));
+            WhseActLine."Source Document"::"Prod. Consumption":
+                if not LPStatus."Available for Consumption" then
+                    exit(StrSubstNo('License Plate %1 (status ''%2'') is not available for consumption.', _LicensePlate."No.", LPStatus.Code));
+        end;
+    end;
+
+    local procedure CheckLotStatusForOrderLines(_LicensePlate: Record "MOB License Plate"; _BackendId: Code[20]) ErrorMsg: Text
+    var
+        LPContent: Record "MOB License Plate Content";
+        LotNoInfo: Record "Lot No. Information";
+        LotStatus: Record "LGS LS Lot Status";
+        WhseActLine: Record "Warehouse Activity Line";
+        SourceDocument: Enum "Warehouse Activity Source Document";
+    begin
+        WhseActLine.SetRange("Activity Type", WhseActLine."Activity Type"::Pick);
+        WhseActLine.SetRange("No.", _BackendId);
+        WhseActLine.SetRange("Action Type", WhseActLine."Action Type"::Take);
+        if not WhseActLine.FindFirst() then
+            exit('');
+        SourceDocument := WhseActLine."Source Document";
+
+        LPContent.SetRange("License Plate No.", _LicensePlate."No.");
+        LPContent.SetRange(Type, LPContent.Type::Item);
+        LPContent.SetFilter("Lot No.", '<>%1', '');
+        if not LPContent.FindSet() then
+            exit('');
+
+        repeat
+            if not LotNoInfo.Get(LPContent."No.", LPContent."Variant Code", LPContent."Lot No.") or
+               (LotNoInfo."LGS LS Lot Status Code" = '')
+            then
+                exit(StrSubstNo('Lot %1 has no lot status set and cannot be picked.', LPContent."Lot No."));
+
+            if not LotStatus.Get(LotNoInfo."LGS LS Lot Status Code") then
+                exit(StrSubstNo('Lot %1 has unknown lot status ''%2''.', LPContent."Lot No.", LotNoInfo."LGS LS Lot Status Code"));
+
+            case SourceDocument of
+                WhseActLine."Source Document"::"Sales Order":
+                    if not LotStatus."Available for Sale" then
+                        exit(StrSubstNo('Lot %1 (status ''%2'') is not available for sale.', LPContent."Lot No.", LotStatus.Code));
+                WhseActLine."Source Document"::"Outbound Transfer":
+                    if not LotStatus."Available for Transfer" then
+                        exit(StrSubstNo('Lot %1 (status ''%2'') is not available for transfer.', LPContent."Lot No.", LotStatus.Code));
+                WhseActLine."Source Document"::"Prod. Consumption":
+                    if not LotStatus."Available for Consumption" then
+                        exit(StrSubstNo('Lot %1 (status ''%2'') is not available for consumption.', LPContent."Lot No.", LotStatus.Code));
+            end;
+        until LPContent.Next() = 0;
+    end;
+
+    local procedure CanPickEntireLicensePlate(_LicensePlate: Record "MOB License Plate"; _BackendId: Code[20]): Boolean
+    var
+        LPContent: Record "MOB License Plate Content";
+        WhseActLine: Record "Warehouse Activity Line";
+        WhseLineRemainingQty: Dictionary of [Integer, Decimal];
+        RemainingLPQty: Decimal;
+    begin
+        LPContent.SetRange("License Plate No.", _LicensePlate."No.");
+        LPContent.SetRange(Type, LPContent.Type::Item);
+        if not LPContent.FindSet() then
+            exit(true); // no content — nothing to block
+
+        repeat
+            RemainingLPQty := LPContent.Quantity;
+
+            // First pass: lines with matching lot
+            if LPContent."Lot No." <> '' then begin
+                SetWhseActLineFiltersForLP(WhseActLine, _BackendId, LPContent);
+                WhseActLine.SetRange("Lot No.", LPContent."Lot No.");
+                AllocateToWhseLines(WhseActLine, WhseLineRemainingQty, RemainingLPQty);
+            end;
+
+            // Second pass: lines without lot specified
+            if RemainingLPQty > 0 then begin
+                SetWhseActLineFiltersForLP(WhseActLine, _BackendId, LPContent);
+                WhseActLine.SetRange("Lot No.", '');
+                AllocateToWhseLines(WhseActLine, WhseLineRemainingQty, RemainingLPQty);
+            end;
+
+            if RemainingLPQty > 0 then
+                exit(false);
+        until LPContent.Next() = 0;
+
+        exit(true);
+    end;
+
+    local procedure SetWhseActLineFiltersForLP(var _WhseActLine: Record "Warehouse Activity Line"; _BackendId: Code[20]; _LPContent: Record "MOB License Plate Content")
+    begin
+        _WhseActLine.Reset();
+        _WhseActLine.SetRange("Activity Type", _WhseActLine."Activity Type"::Pick);
+        _WhseActLine.SetRange("No.", _BackendId);
+        _WhseActLine.SetRange("Action Type", _WhseActLine."Action Type"::Take);
+        _WhseActLine.SetRange("Item No.", _LPContent."No.");
+        _WhseActLine.SetRange("Variant Code", _LPContent."Variant Code");
+        _WhseActLine.SetRange("Unit of Measure Code", _LPContent."Unit Of Measure Code");
+        _WhseActLine.SetFilter("Qty. Outstanding", '>0');
+    end;
+
+    local procedure AllocateToWhseLines(var _WhseActLine: Record "Warehouse Activity Line"; var _Dict: Dictionary of [Integer, Decimal]; var _RemainingLPQty: Decimal)
+    var
+        RemainingWhseQty: Decimal;
+    begin
+        if not _WhseActLine.FindSet() then
+            exit;
+        repeat
+            if _RemainingLPQty <= 0 then
+                exit;
+            if not _Dict.ContainsKey(_WhseActLine."Line No.") then
+                _Dict.Add(_WhseActLine."Line No.", _WhseActLine."Qty. Outstanding");
+            RemainingWhseQty := _Dict.Get(_WhseActLine."Line No.");
+            if RemainingWhseQty > 0 then
+                if _RemainingLPQty >= RemainingWhseQty then begin
+                    _RemainingLPQty -= RemainingWhseQty;
+                    _Dict.Set(_WhseActLine."Line No.", 0);
+                end else begin
+                    _Dict.Set(_WhseActLine."Line No.", RemainingWhseQty - _RemainingLPQty);
+                    _RemainingLPQty := 0;
+                end;
+        until _WhseActLine.Next() = 0;
     end;
 
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Pick", 'OnPostPickOrder_OnAfterPostAnyOrder', '', true, true)]

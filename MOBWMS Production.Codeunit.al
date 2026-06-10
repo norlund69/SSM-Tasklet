@@ -532,6 +532,7 @@ codeunit 50157 "MOB WMS Production G2I"
         NewLP.Validate("Location Code", _ProductionJnlLine."Location Code");
         NewLP.Validate("Bin Code", ToBin);
         NewLP."LGS Pallet Type" := PalletType;
+        NewLP.Validate("LGS LPS LP Status Code", 'Released');
         NewLP.Insert(true);
 
         // Add item content using base quantity (EA), not PALL quantity.

@@ -154,9 +154,8 @@ codeunit 50155 "MOB WMS Receive G2I"
             NewLP.Validate("No.", G2ILicensePlateMgt.GetNextLicensePlateNo());
             NewLP.Validate("Location Code", _WhseReceiptLine."Location Code");
             NewLP.Validate("Bin Code", _ToBin);
-            NewLP.Validate("Whse. Document Type", NewLP."Whse. Document Type"::Receipt);
-            NewLP.Validate("Whse. Document No.", _WhseReceiptLine."No.");
             NewLP."LGS Pallet Type" := _PalletType;
+            NewLP.Validate("LGS LPS LP Status Code", 'Released');
             NewLP.Insert(true);
 
             G2ILicensePlateMgt.AddContentLine(NewLP, SourceContent, QtyPerPallet);
@@ -311,6 +310,7 @@ codeunit 50155 "MOB WMS Receive G2I"
         XmlStep: XmlNode;
         BackendId: Code[20];
         ExpirationDate: Date;
+        LotDate: Date;
         LastLotNo: Text;
         LotNoText: Text;
     begin
@@ -348,10 +348,16 @@ codeunit 50155 "MOB WMS Receive G2I"
                 LastLotNo := ItemLedgerEntry."Lot No.";
         end;
 
+        // Lot date = expiration date minus the item's expiration calculation (e.g. -36M).
+        // Falls back to expiration date itself when no calculation is defined on the item.
+        LotDate := ExpirationDate;
+        if Format(Item."Expiration Calculation") <> '' then
+            LotDate := CalcDate(StrSubstNo('<-%1>', Format(Item."Expiration Calculation")), ExpirationDate);
+
         LotNoText := LotFormatImpl.GenerateLotNo(
             LotFormatHeader,
             WhseReceiptLine."Location Code",
-            ExpirationDate,
+            LotDate,
             '',     // ShiftCode
             '',     // WorkCenterCode
             '',     // MachineCenterCode

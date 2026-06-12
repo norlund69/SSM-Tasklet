@@ -186,11 +186,6 @@ codeunit 50152 "MOB WMS Pick G2I"
                             _Steps.Set_onlineValidation('LicensePlateValidation', true);
                             _Steps.Save();
                         end;
-                    'Quantity':
-                        begin
-                            _Steps.Set_onlineValidation('QuantityValidation', true);
-                            _Steps.Save();
-                        end;
                 end;
             until _Steps.Next() = 0;
     end;
@@ -381,47 +376,6 @@ codeunit 50152 "MOB WMS Pick G2I"
             MobXmlMgt.AddAttribute(XmlStep, 'interactionPermission',
                 Format(Enum::"MOB ValueInteractionPermission"::VerifyOnly));
         end;
-    end;
-
-    [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Whse. Inquiry", 'OnWhseInquiryOnCustomDocumentType', '', true, true)]
-    local procedure OnQuantityValidation(_DocumentType: Text; var _RequestValues: Record "MOB NS Request Element"; var _ResponseElement: Record "MOB NS Resp Element"; var _RegistrationTypeTracking: Text; var _IsHandled: Boolean)
-    var
-        WhseActLine: Record "Warehouse Activity Line";
-        LPContent: Record "MOB License Plate Content";
-        LicensePlateNo: Code[20];
-        LotNo: Code[50];
-        EnteredQty: Decimal;
-    begin
-        if _IsHandled then
-            exit;
-        if _DocumentType <> 'QuantityValidation' then
-            exit;
-        /*
-                LicensePlateNo := CopyStr(_RequestValues.GetValue('FromLicensePlate'), 1, MaxStrLen(LicensePlateNo));
-                EnteredQty := _RequestValues.Get_Quantity();
-
-                WhseActLine.Get(
-                    WhseActLine."Activity Type"::Pick,
-                    CopyStr(_RequestValues.GetValue('backendId'), 1, MaxStrLen(WhseActLine."No.")),
-                    _RequestValues.Get_LineNumberAsInteger());
-
-                LotNo := CopyStr(_RequestValues.GetValue('LotNumber'), 1, MaxStrLen(LotNo));
-
-                LPContent.SetRange("License Plate No.", LicensePlateNo);
-                LPContent.SetRange(Type, LPContent.Type::Item);
-                LPContent.SetRange("No.", WhseActLine."Item No.");
-                if WhseActLine."Variant Code" <> '' then
-                    LPContent.SetRange("Variant Code", WhseActLine."Variant Code");
-                if LotNo <> '' then
-                    LPContent.SetRange("Lot No.", LotNo);
-
-                if not LPContent.FindFirst() then
-                    Error('No content found on License Plate %1 for item %2.', LicensePlateNo, WhseActLine."Item No.");
-
-                if EnteredQty > LPContent.Quantity then
-                    Error('Quantity %1 exceeds License Plate content of %2.', EnteredQty, LPContent.Quantity);
-        */
-        _IsHandled := true;
     end;
 
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Whse. Inquiry", 'OnWhseInquiryOnCustomDocumentTypeAsXml', '', true, true)]
@@ -689,7 +643,6 @@ codeunit 50152 "MOB WMS Pick G2I"
         MobWmsSetupDocTypes: Codeunit "MOB WMS Setup Doc. Types";
     begin
         MobWmsSetupDocTypes.CreateDocumentType('LicensePlateValidation', '', Codeunit::"MOB WMS Whse. Inquiry");
-        MobWmsSetupDocTypes.CreateDocumentType('QuantityValidation', '', Codeunit::"MOB WMS Whse. Inquiry");
     end;
 
 }

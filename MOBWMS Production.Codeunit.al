@@ -45,7 +45,6 @@ codeunit 50157 "MOB WMS Production G2I"
     // =========================================================================
     // a.  OUTPUT HEADER — add BOM No. and Pallet Type to display lines
     // =========================================================================
-
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Lookup", 'OnLookupOnProdOutput_OnAfterSetFromProductionOutput', '', true, true)]
     local procedure OnAfterSetFromProdOutput(
         _ProdOrderLine: Record "Prod. Order Line";
@@ -67,14 +66,10 @@ codeunit 50157 "MOB WMS Production G2I"
         PallQtyPerUoM: Decimal;
         G2IRepackSession: Codeunit "G2I Repack Session";
     begin
-        // Re-derive and re-set order type from the production order on every output
-        // registration. This ensures correct state even when the BC service tier
-        // assigns a fresh session for this request (SingleInstance state is lost).
-        if ProductionOrder.Get(_ProdOrderLine.Status, _ProdOrderLine."Prod. Order No.") then
-            if ProductionOrder."LGS PW Repack" then
-                G2IRepackSession.SetOrderType('Repack')
-            else
-                G2IRepackSession.SetOrderType('Production');
+        // Persist order type in the element so GetRegistrationConfiguration
+        // (a new session) can read it from transferred context instead of
+        // relying on G2IRepackSession which is empty in the new session.
+        _LookupResponseElement.SetValue('G2I_OrderType', G2IRepackSession.GetOrderType());
 
         if G2IRepackSession.GetOrderType() <> 'Production' then
             exit;
@@ -163,7 +158,6 @@ codeunit 50157 "MOB WMS Production G2I"
     // and RegisterScrapCode to false in OnAfterSetFromProductionOutput, so they
     // are never added to the buffer and don't need hiding here.
     // =========================================================================
-
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Adhoc Registr.", 'OnGetRegistrationConfigurationOnProdOutput_OnAfterAddStepToProductionOutputQuantity', '', true, true)]
     local procedure OnAfterAddStepToProdOutputQuantity(
         _RegistrationType: Text;
@@ -173,7 +167,8 @@ codeunit 50157 "MOB WMS Production G2I"
         G2IRepackSession: Codeunit "G2I Repack Session";
         OrderType: Text;
     begin
-        OrderType := G2IRepackSession.GetOrderType();
+        //OrderType := G2IRepackSession.GetOrderType();
+        OrderType := _LookupResponse.GetValue('G2I_OrderType');
 
         case _Step.Get_name() of
             // b.I: Hide ToBin for Production — output goes to the fixed Production bin.
@@ -453,7 +448,6 @@ codeunit 50157 "MOB WMS Production G2I"
     // and instead create the LP automatically at post time if the item's
     // LGS Item Type = Finished Good.
     // =========================================================================
-
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB License Plate Prod Output", 'OnBeforeCheckLicensePlateHandlingInProdOutput', '', true, true)]
     local procedure OnBeforeCheckLPHandlingInProdOutput(
         _ProdOrderRoutingLine: Record "Prod. Order Routing Line";
@@ -472,6 +466,38 @@ codeunit 50157 "MOB WMS Production G2I"
         // Suppress the standard LP scan step — LP is created automatically at post time.
         // Production: see OnAutoCreateProdOutputLP.  Repack: see OnAutoCreateRepackOutputLP.
         IsHandled := true;
+    end;
+
+    // =========================================================================
+    // a.II.pre  SEED SESSION ORDER TYPE FOR GetRegistrationConfiguration
+    //
+    // When ProdOutputQuantity is opened from the action menu it runs in a new
+    // BC session where G2IRepackSession is empty.  OnAfterSetFromProdOutput
+    // persists the order type as G2I_OrderType on the element; here we read it
+    // back from the transferred context and re-populate G2IRepackSession so
+    // OnBeforeCheckLPHandlingInProdOutput (and other subscribers) work
+    // correctly.  This fires before CreateStepsForProdOutputLicensePlate.
+    // =========================================================================
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Adhoc Registr.", 'OnGetRegistrationConfiguration_OnBeforeAddSteps', '', true, true)]
+    local procedure OnBeforeAddProdOutputSteps_SeedOrderType(
+        _RegistrationType: Text;
+        var _HeaderFieldValues: Record "MOB NS Request Element";
+        var _Steps: Record "MOB Steps Element";
+        var _RegistrationTypeTracking: Text;
+        var _IsHandled: Boolean)
+    var
+        TempLookupResponse: Record "MOB NS WhseInquery Element" temporary;
+        G2IRepackSession: Codeunit "G2I Repack Session";
+        OrderType: Text;
+    begin
+        if not _RegistrationType.StartsWith('ProdOutput') then
+            exit;
+
+        _HeaderFieldValues.Get_ContextValuesAsWhseInquiryElement(TempLookupResponse, true);
+        OrderType := TempLookupResponse.GetValue('G2I_OrderType');
+        if OrderType <> '' then
+            G2IRepackSession.SetOrderType(OrderType);
     end;
 
     // =========================================================================

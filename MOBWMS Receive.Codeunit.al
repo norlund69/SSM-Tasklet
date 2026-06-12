@@ -14,8 +14,10 @@ codeunit 50155 "MOB WMS Receive G2I"
     //   id 50   Quantity          standard step                        auto-applied = QtyPerPallet × NumberOfPallets
     //   id 55   LicensePlate      standard step                        hidden — LP created automatically
     //
-    // Custom steps 6, 7, 8 are injected directly in OnAddStepsToAnyLine.
-    // Standard workflow steps are not modified.
+    // Custom steps 6, 7, 8 are injected via OnAddStepsToAnyLine.
+    // LotNumber default (today's date) is set on the order line element via
+    // OnAfterSetFromAnyLine so the {LotNumber} binding in app.cfg picks it up.
+    // ExpirationDateValidation overrides it when the user enters an expiry date.
     //
     // On post: _Registration.Quantity = QtyPerPallet × NumberOfPallets (total).
     //          Divide across NumberOfPallets LPs; last LP absorbs rounding remainder.
@@ -29,8 +31,6 @@ codeunit 50155 "MOB WMS Receive G2I"
        _RecRef: RecordRef;
        var _BaseOrderLineElement: Record "MOB NS BaseDataModel Element";
        var _Steps: Record "MOB Steps Element")
-    var
-        LotNoText: Text;
     begin
         // Step 6: Number of pallets.
         _Steps.Create_IntegerStep(6, 'NumberOfPallets');
@@ -53,35 +53,15 @@ codeunit 50155 "MOB WMS Receive G2I"
         // applies the result to the standard Quantity step (which is then hidden).
         _Steps.Create_DecimalStep(8, 'QtyPerPallet', false);
         _Steps.Set_header('Qty per pallet:');
-        _Steps.Set_helpLabel('Enter the quantity per pallet. Total = Qty × No. of pallets.');
+        _Steps.Set_helpLabel('Enter the quantity of items per pallet.');
         _Steps.Set_minValue('0.00001');
         _Steps.Set_optional(false);
         _Steps.Set_onlineValidation('QtyPerPalletValidation', true);
-
-        // Pre-compute the default lot number once for this line.
-        // Applied to LotNumber step below; ExpirationDateValidation regenerates it
-        // if the user enters a different expiration date.
-        LotNoText := GetReceiveLotNo(_RecRef);
-
-        // Scan existing standard steps: attach ExpirationDate validation and
-        // pre-fill LotNumber with the default lot.
-        _Steps.SetRange(ConfigurationKey, _Steps.ConfigurationKey);
-        if _Steps.FindSet() then
-            repeat
-                case _Steps.Get_name() of
-                    'ExpirationDate':
-                        begin
-                            _Steps.Set_onlineValidation('ExpirationDateValidation', true);
-                            _Steps.Save();
-                        end;
-                    'LotNumber':
-                        if LotNoText <> '' then begin
-                            _Steps.Set_defaultValue(LotNoText);
-                            _Steps.Save();
-                        end;
-                end;
-            until _Steps.Next() = 0;
     end;
+
+    // =========================================================================
+    // 2.  ORDER LINE SETUP — ToBin and default LotNumber
+    // =========================================================================
 
     // =========================================================================
     // 3.  POST — handle each registration line
@@ -438,7 +418,7 @@ codeunit 50155 "MOB WMS Receive G2I"
     end;
 
     // =========================================================================
-    // 8.  DOCUMENT TYPE REGISTRATION
+    // 11. DOCUMENT TYPE REGISTRATION
     //
     // Registers custom online validation document types handled by
     // MOB WMS Whse. Inquiry.  Runs on extension install and upgrade.
@@ -455,14 +435,23 @@ codeunit 50155 "MOB WMS Receive G2I"
         MobWmsSetupDocTypes.CreateDocumentType('ExpirationDateValidation', '', Codeunit::"MOB WMS Whse. Inquiry");
     end;
 
-    // ToBin is always 'Production' — set it on the line and suppress the Scan Bin step.
+    // ToBin is fixed to 'Production'; suppress the Scan Bin step.
+    // Also pre-fills LotNumber on the element so the {LotNumber} binding in
+    // app.cfg shows a today-based default.  ExpirationDateValidation replaces
+    // it with the expiry-date-derived lot number when the user enters a date.
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Receive", 'OnGetReceiveOrderLines_OnAfterSetFromAnyLine', '', true, true)]
     local procedure OnSetReceiveToBin(
         _RecRef: RecordRef;
         var _BaseOrderLineElement: Record "MOB NS BaseDataModel Element")
+    var
+        LotNoText: Text;
     begin
         _BaseOrderLineElement.Set_ToBin('Production');
         _BaseOrderLineElement.Set_ValidateToBin(false);
+
+        LotNoText := GetReceiveLotNo(_RecRef);
+        if LotNoText <> '' then
+            _BaseOrderLineElement.Set_LotNumber(LotNoText);
     end;
 
     // Returns the default lot number for the receive line using the item's LGS lot

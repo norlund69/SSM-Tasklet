@@ -64,6 +64,7 @@ codeunit 50157 "MOB WMS Production G2I"
         LastLotNo: Text;
         LotNoText: Text;
         PallQtyPerUoM: Decimal;
+        NewLine: Char;
         G2IRepackSession: Codeunit "G2I Repack Session";
     begin
         // Persist order type in the element so GetRegistrationConfiguration
@@ -73,6 +74,11 @@ codeunit 50157 "MOB WMS Production G2I"
 
         if G2IRepackSession.GetOrderType() <> 'Production' then
             exit;
+
+        // Remove Actual Setup Time, Actual Run Time and Actual Scrap Qty from the
+        // order line display — SSM does not track these on the handheld.
+        _LookupResponseElement.SetValue('ExtraInfo2_Col1', '');
+        _LookupResponseElement.SetValue('ExtraInfo2_Col2', '');
 
         if _ProdOrderLine."Production BOM No." <> '' then begin
             if _ProdOrderLine."Production BOM Version Code" <> '' then
@@ -90,15 +96,22 @@ codeunit 50157 "MOB WMS Production G2I"
                 if ProductionOrder."LGS Pallet Type" <> '' then
                     _LookupResponseElement.Set_DisplayLine8('Pallet Type: ' + ProductionOrder."LGS Pallet Type");
 
-        // Default output quantity UoM to PALL if it exists on the item.
-        if ItemUoM.Get(_ProdOrderLine."Item No.", 'PALL') then begin
-            if ItemUoM."Qty. per Unit of Measure" > 0 then
-                PallQtyPerUoM := Round(
-                    _ProdOrderLine."Remaining Quantity" / ItemUoM."Qty. per Unit of Measure",
-                    0.00001, '=');
-            _LookupResponseElement.Set_UoM('PALL');
-            _LookupResponseElement.Set_Quantity(Format(PallQtyPerUoM, 0, '<Precision,0:5><Standard Format,0>'));
-            _LookupResponseElement.SetValue('DisplayUoM', 'UoM: PALL');
+        // Non-Finished-Good items default to quantity 0 — they are not the primary
+        // output so the remaining quantity should not pre-fill.
+        // Finished Good items default to PALL UoM quantity if PALL exists on the item.
+        if Item.Get(_ProdOrderLine."Item No.") then begin
+            if Item."LGS Item Type" <> Item."LGS Item Type"::"Finished Good" then
+                _LookupResponseElement.Set_Quantity('0')
+            else if ItemUoM.Get(_ProdOrderLine."Item No.", 'PALL') then begin
+                if ItemUoM."Qty. per Unit of Measure" > 0 then
+                    PallQtyPerUoM := Round(
+                        _ProdOrderLine."Remaining Quantity" / ItemUoM."Qty. per Unit of Measure",
+                        0.00001, '=');
+                _LookupResponseElement.Set_UoM('PALL');
+                _LookupResponseElement.Set_Quantity(Format(PallQtyPerUoM, 0, '<Precision,0:5><Standard Format,0>'));
+                NewLine := 10;
+                _LookupResponseElement.SetValue('DisplayUoM', 'UoM: PALL' + NewLine + 'Qty pr. PALL = ' + Format(ItemUoM."Qty. per Unit of Measure", 0, '<Precision,0:5><Standard Format,0>'));
+            end;
         end;
 
         // Pre-fill lot number from the item's lot format if configured.
@@ -131,7 +144,7 @@ codeunit 50157 "MOB WMS Production G2I"
                         LotFormatHeader,
                         _ProdOrderLine."Location Code",
                         Today(),
-                        '',             // ShiftCode — not available at this point
+                        GetShiftCodeForWorkCenter(WorkCenterCode),
                         WorkCenterCode,
                         MachineCenterCode,
                         LastLotNo);
@@ -140,23 +153,26 @@ codeunit 50157 "MOB WMS Production G2I"
                         _LookupResponseElement.SetValue('LotNumber', LotNoText);
                 end;
 
-        // Suppress scrap quantity and scrap code steps — SSM does not register
-        // scrap on the handheld.  Setting RegisterScrapQuantity = false prevents
-        // CreateStepsForProdOutputScrap from adding the steps at all.
+        // Suppress time tracking and scrap steps — SSM does not register these on
+        // the handheld.  Setting Register* = false prevents CreateStepsForProdOutput*
+        // from adding the steps at all, which is cleaner than hiding them via the
+        // OnAfterAddStep event (which fires from a different event than Quantity steps).
+        _LookupResponseElement.SetValue('RegisterSetupTime', 'false');
+        _LookupResponseElement.SetValue('RegisterRunTime', 'false');
         _LookupResponseElement.SetValue('RegisterScrapQuantity', 'false');
         _LookupResponseElement.SetValue('RegisterScrapCode', 'false');
     end;
 
     // =========================================================================
-    // a. + b.I  HIDE TIME TRACKING AND TO BIN STEPS
+    // a. + b.I  HIDE TO BIN AND EXPIRATION DATE STEPS
     //
     // OnAfterAddStepToProductionOutputQuantity fires once per step after
     // Tasklet adds it to the step buffer.  We use it to suppress unwanted
     // steps by setting them invisible.
     //
-    // Note: Scrap steps are suppressed upstream by setting RegisterScrapQuantity
-    // and RegisterScrapCode to false in OnAfterSetFromProductionOutput, so they
-    // are never added to the buffer and don't need hiding here.
+    // Note: Time tracking (SetupTime/RunTime) and scrap steps are suppressed
+    // upstream by setting Register* = false in OnAfterSetFromProductionOutput,
+    // so they are never added to the buffer and don't need hiding here.
     // =========================================================================
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Adhoc Registr.", 'OnGetRegistrationConfigurationOnProdOutput_OnAfterAddStepToProductionOutputQuantity', '', true, true)]
     local procedure OnAfterAddStepToProdOutputQuantity(
@@ -164,10 +180,8 @@ codeunit 50157 "MOB WMS Production G2I"
         var _LookupResponse: Record "MOB NS WhseInquery Element";
         var _Step: Record "MOB Steps Element")
     var
-        G2IRepackSession: Codeunit "G2I Repack Session";
         OrderType: Text;
     begin
-        //OrderType := G2IRepackSession.GetOrderType();
         OrderType := _LookupResponse.GetValue('G2I_OrderType');
 
         case _Step.Get_name() of
@@ -178,9 +192,8 @@ codeunit 50157 "MOB WMS Production G2I"
                     _Step.Save();
                 end;
 
-            // a: Hide time tracking — SSM does not register time on the handheld.
-            'SetupTime',
-            'RunTime':
+            // a: Hide expiration date — not used in production output.
+            'ExpirationDate':
                 if OrderType = 'Production' then begin
                     _Step.Set_visible(false);
                     _Step.Save();
@@ -338,13 +351,13 @@ codeunit 50157 "MOB WMS Production G2I"
                 LastLotNo := ItemLedgerEntry."Lot No.";
         end;
 
-        // Generate lot number with full context including work center and machine center.
-        // ShiftCode not known at this point — left blank.
+        // Generate lot number with full context including work center, machine center,
+        // and the active shift derived from the work center's shop calendar.
         LotNoText := LotFormatImpl.GenerateLotNo(
             LotFormatHeader,
             LocationCode,
             Today(),
-            '',             // ShiftCode — not available at output step time
+            GetShiftCodeForWorkCenter(WorkCenterCode),
             WorkCenterCode,
             MachineCenterCode,
             LastLotNo);
@@ -418,6 +431,8 @@ codeunit 50157 "MOB WMS Production G2I"
         var _BaseOrderLineElement: Record "MOB NS BaseDataModel Element")
     var
         G2IRepackSession: Codeunit "G2I Repack Session";
+        Item: Record Item;
+        RndPrecision: Decimal;
     begin
         if G2IRepackSession.GetOrderType() <> 'Production' then
             exit;
@@ -434,9 +449,14 @@ codeunit 50157 "MOB WMS Production G2I"
         // Prod. Order Component is used by the standard posting path.
         _BaseOrderLineElement.Set_ValidateFromBin(false);
 
-        // c.III: Default quantity to zero so the user must enter it explicitly.
-        // Overrides the pre-filled remaining quantity sent by Tasklet.
-        _BaseOrderLineElement.Set_Quantity(0);
+        // c.III: Reformat Quantity Per display row using Item."Rounding Precision".
+        Item.Get(_ProdOrderComponent."Item No.");
+        RndPrecision := Item."Rounding Precision";
+        if RndPrecision <= 0 then
+            RndPrecision := 0.00001;
+        _BaseOrderLineElement.SetValue('ExtraInfo1_Col2',
+            Format(Round(_ProdOrderComponent."Quantity per", RndPrecision))
+            + ' ' + _ProdOrderComponent."Unit of Measure Code");
     end;
 
     // =========================================================================
@@ -679,5 +699,57 @@ codeunit 50157 "MOB WMS Production G2I"
         MobWmsSetupDocTypes: Codeunit "MOB WMS Setup Doc. Types";
     begin
         MobWmsSetupDocTypes.CreateDocumentType('ProdOutputWorkCenterValidation', '', Codeunit::"MOB WMS Whse. Inquiry");
+    end;
+
+    // =========================================================================
+    // SHIFT CODE HELPERS
+    // =========================================================================
+
+    // Returns the active shift code for a work center based on the work center's
+    // shop calendar and the current time of day.  Returns '' when no shift matches
+    // (e.g. outside scheduled hours) or when the work center has no calendar.
+    local procedure GetShiftCodeForWorkCenter(_WorkCenterCode: Code[20]): Code[10]
+    var
+        WorkCenter: Record "Work Center";
+    begin
+        if _WorkCenterCode = '' then
+            exit('');
+        if not WorkCenter.Get(_WorkCenterCode) then
+            exit('');
+        exit(GetCurrentShiftFromCalendar(WorkCenter."Shop Calendar Code"));
+    end;
+
+    // Looks up the active shift in a shop calendar for the current day and time.
+    // Handles overnight shifts where Ending Time < Starting Time.
+    local procedure GetCurrentShiftFromCalendar(_ShopCalendarCode: Code[10]): Code[10]
+    var
+        ShopCalWorkingDay: Record "Shop Calendar Working Days";
+        CurrentTime: Time;
+        DayNo: Integer;
+        InShift: Boolean;
+    begin
+        if _ShopCalendarCode = '' then
+            exit('');
+        CurrentTime := Time;
+        DayNo := Date2DWY(Today, 1);
+
+        ShopCalWorkingDay.SetRange("Shop Calendar Code", _ShopCalendarCode);
+        ShopCalWorkingDay.SetRange(Day, DayNo);
+        if ShopCalWorkingDay.FindSet() then
+            repeat
+                if ShopCalWorkingDay."Starting Time" < ShopCalWorkingDay."Ending Time" then
+                    // Normal shift — start and end on same day.
+                    InShift :=
+                        (CurrentTime >= ShopCalWorkingDay."Starting Time") and
+                        (CurrentTime < ShopCalWorkingDay."Ending Time")
+                else
+                    // Overnight shift — wraps past midnight.
+                    InShift :=
+                        (CurrentTime >= ShopCalWorkingDay."Starting Time") or
+                        (CurrentTime < ShopCalWorkingDay."Ending Time");
+
+                if InShift then
+                    exit(ShopCalWorkingDay."Work Shift Code");
+            until ShopCalWorkingDay.Next() = 0;
     end;
 }

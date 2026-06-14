@@ -88,6 +88,11 @@ codeunit 50155 "MOB WMS Receive G2I"
 
         CreateReceiveLicensePlates(
             _Registration, _WhseReceiptLine, NumberOfPallets, ToBin, PalletType);
+
+        SetLotStatusReleased(
+            _WhseReceiptLine."Item No.",
+            _WhseReceiptLine."Variant Code",
+            CopyStr(_Registration.LotNumber, 1, 50));
     end;
 
     // =========================================================================
@@ -164,6 +169,23 @@ codeunit 50155 "MOB WMS Receive G2I"
         CrLf[1] := 13;
         CrLf[2] := 10;
         _ResultMessage := 'Receipt posted successfully.' + CrLf + ResultLines;
+    end;
+
+    local procedure SetLotStatusReleased(_ItemNo: Code[20]; _VariantCode: Code[10]; _LotNo: Code[50])
+    var
+        LotNoInfo: Record "Lot No. Information";
+    begin
+        if _LotNo = '' then
+            exit;
+        if not LotNoInfo.Get(_ItemNo, _VariantCode, _LotNo) then begin
+            LotNoInfo.Init();
+            LotNoInfo."Item No." := _ItemNo;
+            LotNoInfo."Variant Code" := _VariantCode;
+            LotNoInfo."Lot No." := _LotNo;
+            LotNoInfo.Insert(true);
+        end;
+        LotNoInfo."LGS LS Lot Status Code" := 'RELEASED';
+        LotNoInfo.Modify(true);
     end;
 
     // =========================================================================
@@ -293,6 +315,11 @@ codeunit 50155 "MOB WMS Receive G2I"
         LotDate: Date;
         LastLotNo: Text;
         LotNoText: Text;
+        DateStr: Text;
+        DateParts: List of [Text];
+        Day: Integer;
+        Month: Integer;
+        Year: Integer;
     begin
         if _DocumentType <> 'ExpirationDateValidation' then
             exit;
@@ -301,8 +328,19 @@ codeunit 50155 "MOB WMS Receive G2I"
 
         MobRequestMgt.SaveAdhocRequestValues(_XMLRequestDoc, TempRequestValues);
 
-        if not Evaluate(ExpirationDate, TempRequestValues.GetValue('ExpirationDate')) then
+        // Tasklet sends the date as DD-MM-YYYY. Evaluate(Date,...) only accepts
+        // MM/DD/YYYY in BC cloud, so split and build the date explicitly.
+        DateStr := TempRequestValues.GetValue('ExpirationDate');
+        DateParts := DateStr.Split('-');
+        if DateParts.Count <> 3 then
             exit;
+        if not Evaluate(Day, DateParts.Get(1)) then
+            exit;
+        if not Evaluate(Month, DateParts.Get(2)) then
+            exit;
+        if not Evaluate(Year, DateParts.Get(3)) then
+            exit;
+        ExpirationDate := DMY2Date(Day, Month, Year);
         if ExpirationDate = 0D then
             exit;
 
@@ -354,6 +392,7 @@ codeunit 50155 "MOB WMS Receive G2I"
         MobXmlMgt.AddElement(XmlStepUpdates, 'step', '', '', XmlStep);
         MobXmlMgt.AddAttribute(XmlStep, 'name', 'LotNumber');
         MobXmlMgt.AddAttribute(XmlStep, 'value', LotNoText);
+        MobXmlMgt.AddAttribute(XmlStep, 'validationValues', LotNoText);
         MobXmlMgt.AddAttribute(XmlStep, 'interactionPermission',
             Format(Enum::"MOB ValueInteractionPermission"::AllowEdit));
     end;
@@ -433,84 +472,23 @@ codeunit 50155 "MOB WMS Receive G2I"
         MobWmsSetupDocTypes.CreateDocumentType('PalletTypeValidation', '', Codeunit::"MOB WMS Whse. Inquiry");
         MobWmsSetupDocTypes.CreateDocumentType('QtyPerPalletValidation', '', Codeunit::"MOB WMS Whse. Inquiry");
         MobWmsSetupDocTypes.CreateDocumentType('ExpirationDateValidation', '', Codeunit::"MOB WMS Whse. Inquiry");
+
     end;
 
     // ToBin is fixed to 'Production'; suppress the Scan Bin step.
-    // Also pre-fills LotNumber on the element so the {LotNumber} binding in
-    // app.cfg shows a today-based default.  ExpirationDateValidation replaces
-    // it with the expiry-date-derived lot number when the user enters a date.
+    // LotNumber is intentionally NOT pre-populated here. Pre-populating sets a
+    // baseline expected value in the mobile app that then rejects the
+    // expiration-date-derived lot (a different date). ExpirationDateValidation
+    // populates the lot step after the user enters an expiry date.
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS Receive", 'OnGetReceiveOrderLines_OnAfterSetFromAnyLine', '', true, true)]
     local procedure OnSetReceiveToBin(
         _RecRef: RecordRef;
         var _BaseOrderLineElement: Record "MOB NS BaseDataModel Element")
-    var
-        LotNoText: Text;
     begin
         _BaseOrderLineElement.Set_ToBin('Production');
         _BaseOrderLineElement.Set_ValidateToBin(false);
-
-        LotNoText := GetReceiveLotNo(_RecRef);
-        if LotNoText <> '' then
-            _BaseOrderLineElement.Set_LotNumber(LotNoText);
     end;
 
-    // Returns the default lot number for the receive line using the item's LGS lot
-    // format with today's date. Returns '' when not applicable.
-    local procedure GetReceiveLotNo(_RecRef: RecordRef): Text
-    var
-        WhseReceiptLine: Record "Warehouse Receipt Line";
-        PurchaseLine: Record "Purchase Line";
-        Item: Record Item;
-        LotFormatHeader: Record "LGS EL Lot Format Header";
-        LotNoInfo: Record "Lot No. Information";
-        ItemLedgerEntry: Record "Item Ledger Entry";
-        LotFormatImpl: Codeunit "LGS EL Lot Format Impl";
-        ItemNo: Code[20];
-        LocationCode: Code[10];
-        LastLotNo: Text;
-    begin
-        case _RecRef.Number() of
-            Database::"Warehouse Receipt Line":
-                begin
-                    _RecRef.SetTable(WhseReceiptLine);
-                    ItemNo := WhseReceiptLine."Item No.";
-                    LocationCode := WhseReceiptLine."Location Code";
-                end;
-            Database::"Purchase Line":
-                begin
-                    _RecRef.SetTable(PurchaseLine);
-                    ItemNo := PurchaseLine."No.";
-                    LocationCode := PurchaseLine."Location Code";
-                end;
-            else
-                exit('');
-        end;
-
-        if not Item.Get(ItemNo) then
-            exit('');
-        if Item."LGS EL Lot No. Format Code" = '' then
-            exit('');
-        if not LotFormatHeader.Get(Item."LGS EL Lot No. Format Code") then
-            exit('');
-
-        LotNoInfo.SetRange("Item No.", ItemNo);
-        if LotNoInfo.FindLast() then
-            LastLotNo := LotNoInfo."Lot No."
-        else begin
-            ItemLedgerEntry.SetRange("Item No.", ItemNo);
-            ItemLedgerEntry.SetRange("Location Code", LocationCode);
-            ItemLedgerEntry.SetFilter("Lot No.", '<>%1', '');
-            if ItemLedgerEntry.FindLast() then
-                LastLotNo := ItemLedgerEntry."Lot No.";
-        end;
-
-        exit(LotFormatImpl.GenerateLotNo(
-            LotFormatHeader,
-            LocationCode,
-            Today(),
-            '', '', '',     // ShiftCode, WorkCenterCode, MachineCenterCode — not applicable for receive
-            LastLotNo));
-    end;
 
     // LP step is always suppressed — LPs are created automatically in the post handler.
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"MOB WMS License Plate Receive", 'OnBeforeHandleToLicensePlateStep', '', true, true)]
